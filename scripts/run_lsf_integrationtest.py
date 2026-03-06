@@ -240,7 +240,10 @@ def main():
         help="Python version for tox environments (default: py312)",
     )
     parser.add_argument("--output-dir", help="Output directory for storing test logs (required for submit mode)")
-    parser.add_argument("--execution-tag", help="Tag for this execution (creates subfolder in output_dir)")
+    parser.add_argument(
+        "--execution-tag",
+        help="Tag for this execution (creates subfolder in output_dir; defaults to timestamp run_YYYYMMDD_HHMMSS)",
+    )
     parser.add_argument("--venv-base-dir", help="Path to virtual environment containing tox (required for submit mode)")
     parser.add_argument(
         "--test-file",
@@ -258,8 +261,17 @@ def main():
         metavar="OUTPUT_DIR",
         help="Check status of jobs from a previous run (provide the output directory path)",
     )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Enable verbose output showing detailed progress for each step",
+    )
 
     args = parser.parse_args()
+
+    # Store verbose flag for use throughout
+    verbose = args.verbose
 
     # If checking status, do that and exit
     if args.check_status:
@@ -313,8 +325,25 @@ def main():
         print(f"TERRATORCH_TMP_ROOT: {terratorch_tmp_root}")
     print()
 
+    # Create log directory from the provided output_dir
+    if verbose:
+        print("Step 5: Setting up log directory...")
+    base_log_dir = Path(args.output_dir).resolve()
+
+    if not base_log_dir.exists():
+        print(f"Error: Output directory does not exist: {base_log_dir}")
+        sys.exit(1)
+
+    log_dir = base_log_dir / execution_tag
+
+    log_dir.mkdir(parents=True, exist_ok=True)
+    print(f"✓ Output folder: {log_dir}")
+    if verbose:
+        print()
+
     # Validate venv_base_dir (mandatory)
-    print("Step 1: Validating virtual environment...")
+    if verbose:
+        print("Step 1: Validating virtual environment...")
     venv_path = Path(args.venv_base_dir)
 
     if not venv_path.exists():
@@ -328,17 +357,20 @@ def main():
         print(f"Expected tox at: {tox_path}")
         sys.exit(1)
 
-    print(f"✓ Virtual environment validated: {venv_path}")
-    print(f"✓ tox found at: {tox_path}")
-    print()
+    if verbose:
+        print(f"✓ Virtual environment validated: {venv_path}")
+        print(f"✓ tox found at: {tox_path}")
+        print()
 
     # Use current directory as full_path since tox will checkout the code
     full_path = Path.cwd()
-    print(f"Step 2: Working directory: {full_path}")
-    print()
+    if verbose:
+        print(f"Step 2: Working directory: {full_path}")
+        print()
 
     # Test file path - validate it exists
-    print("Step 3: Validating test file...")
+    if verbose:
+        print("Step 3: Validating test file...")
     test_file_path = Path(args.test_file)
     full_test_path = full_path / test_file_path
 
@@ -348,28 +380,23 @@ def main():
         print(f"Full path: {full_path}")
         sys.exit(1)
 
-    print(f"✓ Test file found: {full_test_path}")
-    print()
+    if verbose:
+        print(f"✓ Test file found: {full_test_path}")
+        print()
 
     # Extract test names
-    print("Step 4: Extracting test cases...")
+    if verbose:
+        print("Step 4: Extracting test cases...")
     test_list = extract_test_names(full_test_path)
-    print(f"✓ Found {len(test_list)} test cases:")
-    for i, test_name in enumerate(test_list, 1):
-        print(f"  {i}. {test_name}")
-    print()
-
-    # Create log directory from the provided output_dir
-    print("Step 5: Setting up log directory...")
-    base_log_dir = Path(args.output_dir).resolve()
-    log_dir = base_log_dir / execution_tag
-
-    log_dir.mkdir(parents=True, exist_ok=True)
-    print(f"✓ Logs will be stored in: {log_dir}")
-    print()
+    if verbose:
+        print(f"✓ Found {len(test_list)} test cases:")
+        for i, test_name in enumerate(test_list, 1):
+            print(f"  {i}. {test_name}")
+        print()
 
     # Categorize tests
-    print("Step 6: Categorizing test cases...")
+    if verbose:
+        print("Step 6: Categorizing test cases...")
     models_fit_test = None
     dependent_test_list = []
     independent_test_list = []
@@ -386,12 +413,15 @@ def main():
             independent_test_list.append(test_name)
 
     total_tests = len(test_list) + len(VLLM_TESTS)
-    print(f"✓ Categorized {total_tests} tests:")
-    print(f"  - Prerequisite: {1 if models_fit_test else 0}")
-    print(f"  - Dependent: {len(dependent_test_list)}")
-    print(f"  - Independent: {len(independent_test_list)} (from test file) + {len(VLLM_TESTS)} (vLLM environments)")
-    print(f"  - Cleanup: {1 if cleanup_test else 0}")
-    print()
+    if verbose:
+        print(f"✓ Categorized {total_tests} tests:")
+        print(f"  - Prerequisite: {1 if models_fit_test else 0}")
+        print(f"  - Dependent: {len(dependent_test_list)}")
+        print(f"  - Independent: {len(independent_test_list)} (from test file) + {len(VLLM_TESTS)} (vLLM environments)")
+        print(f"  - Cleanup: {1 if cleanup_test else 0}")
+        print()
+    else:
+        print(f"✓ Validated environment and found {total_tests} tests to run")
 
     # Track dependent job IDs for cleanup dependency
     dependent_job_ids = []
@@ -408,13 +438,17 @@ def main():
     # Track all submitted jobs for final summary table
     submitted_jobs = []
 
-    print("=" * 80)
-    print("Step 7: Submitting jobs to LSF")
-    print("=" * 80)
+    if verbose:
+        print("=" * 80)
+        print("Step 7: Submitting jobs to LSF")
+        print("=" * 80)
+    else:
+        print("✓ Submitting jobs to LSF...")
 
     # Submit test_models_fit first
     if models_fit_test:
-        print(f"\n[1/4] Submitting prerequisite test: {models_fit_test}")
+        if verbose:
+            print(f"\n[1/4] Submitting prerequisite test: {models_fit_test}")
         job_name = f"tt_{user}_{models_fit_test}"
         tox_work_dir = f".tox/{branch_name}_{models_fit_test}"
         command = f"/bin/bash -c 'set -e; {activate_cmd} && export TEST_BRANCH={branch_name} && export TEST_FUNCTION={models_fit_test} && export TOX_WORK_DIR={tox_work_dir}{env_exports} && tox -r -e integration-tests-base-set-{python_version}; exit $?'"
@@ -430,16 +464,22 @@ def main():
         if models_fit_job_id:
             dependent_job_ids.append(models_fit_job_id)
             submitted_jobs.append(("Prerequisite", models_fit_test, models_fit_job_id, "None"))
-            print(f"  ✓ Job submitted with ID: {models_fit_job_id}")
+            if verbose:
+                print(f"  ✓ Job submitted with ID: {models_fit_job_id}")
         else:
             submitted_jobs.append(("Prerequisite", models_fit_test, "FAILED", "None"))
-            print(f"  ✗ Failed to submit job")
+            if verbose:
+                print(f"  ✗ Failed to submit job")
 
         # Submit dependent tests
         if dependent_test_list and models_fit_job_id:
-            print(f"\n[2/4] Submitting {len(dependent_test_list)} dependent test(s) (will wait for {models_fit_test}):")
+            if verbose:
+                print(
+                    f"\n[2/4] Submitting {len(dependent_test_list)} dependent test(s) (will wait for {models_fit_test}):"
+                )
             for idx, test_name in enumerate(dependent_test_list, 1):
-                print(f"  [{idx}/{len(dependent_test_list)}] Submitting: {test_name}")
+                if verbose:
+                    print(f"  [{idx}/{len(dependent_test_list)}] Submitting: {test_name}")
                 job_name = f"tt_{user}_{test_name}"
                 tox_work_dir = f".tox/{branch_name}_{test_name}"
                 command = f"/bin/bash -c 'set -e; {activate_cmd} && export TEST_BRANCH={branch_name} && export TEST_FUNCTION={test_name} && export TOX_WORK_DIR={tox_work_dir}{env_exports} && tox -r -e integration-tests-base-set-{python_version}; exit $?'"
@@ -456,15 +496,18 @@ def main():
                 if job_id:
                     dependent_job_ids.append(job_id)
                     submitted_jobs.append(("Dependent", test_name, job_id, models_fit_job_id))
-                    print(f"      ✓ Job submitted with ID: {job_id}")
+                    if verbose:
+                        print(f"      ✓ Job submitted with ID: {job_id}")
                 else:
                     submitted_jobs.append(("Dependent", test_name, "FAILED", models_fit_job_id))
-                    print(f"      ✗ Failed to submit job")
+                    if verbose:
+                        print(f"      ✗ Failed to submit job")
 
         # Submit cleanup test
         if cleanup_test and dependent_job_ids and not skip_cleanup:
-            print(f"\n[3/4] Submitting cleanup test: {cleanup_test}")
-            print(f"  Will wait for {len(dependent_job_ids)} job(s) to complete")
+            if verbose:
+                print(f"\n[3/4] Submitting cleanup test: {cleanup_test}")
+                print(f"  Will wait for {len(dependent_job_ids)} job(s) to complete")
             job_name = f"tt_{user}_{cleanup_test}"
 
             # Build dependency condition
@@ -483,21 +526,25 @@ def main():
 
             if cleanup_job_id:
                 submitted_jobs.append(("Cleanup", cleanup_test, cleanup_job_id, "All dependent"))
-                print(f"  ✓ Cleanup test submitted with ID: {cleanup_job_id}")
+                if verbose:
+                    print(f"  ✓ Cleanup test submitted with ID: {cleanup_job_id}")
             else:
                 submitted_jobs.append(("Cleanup", cleanup_test, "FAILED", "All dependent"))
-                print(f"  ✗ Failed to submit cleanup test")
-        elif skip_cleanup:
+                if verbose:
+                    print(f"  ✗ Failed to submit cleanup test")
+        elif skip_cleanup and verbose:
             print(f"\n[3/4] Skipping cleanup test (--no-cleanup flag set)")
 
         # Submit independent tests from test file
         total_independent = len(independent_test_list) + len(VLLM_TESTS)
         if independent_test_list or VLLM_TESTS:
-            print(f"\n[4/4] Submitting {total_independent} independent test(s) (run immediately):")
+            if verbose:
+                print(f"\n[4/4] Submitting {total_independent} independent test(s) (run immediately):")
 
             # Submit tests from test file
             for idx, test_name in enumerate(independent_test_list, 1):
-                print(f"  [{idx}/{total_independent}] Submitting: {test_name}")
+                if verbose:
+                    print(f"  [{idx}/{total_independent}] Submitting: {test_name}")
                 job_name = f"tt_{user}_{test_name}"
                 tox_work_dir = f".tox/{branch_name}_{test_name}"
                 command = f"/bin/bash -c 'set -e; {activate_cmd} && export TEST_BRANCH={branch_name} && export TEST_FUNCTION={test_name} && export TOX_WORK_DIR={tox_work_dir}{env_exports} && tox -r -e integration-tests-base-set-{python_version}; exit $?'"
@@ -510,14 +557,17 @@ def main():
                 )
                 if job_id:
                     submitted_jobs.append(("Independent", test_name, job_id, "None"))
-                    print(f"      ✓ Job submitted with ID: {job_id}")
+                    if verbose:
+                        print(f"      ✓ Job submitted with ID: {job_id}")
                 else:
                     submitted_jobs.append(("Independent", test_name, "FAILED", "None"))
-                    print(f"      ✗ Failed to submit job")
+                    if verbose:
+                        print(f"      ✗ Failed to submit job")
 
             # Submit vLLM test environments
             for idx, tox_env in enumerate(VLLM_TESTS, len(independent_test_list) + 1):
-                print(f"  [{idx}/{total_independent}] Submitting vLLM test: {tox_env}")
+                if verbose:
+                    print(f"  [{idx}/{total_independent}] Submitting vLLM test: {tox_env}")
                 job_name = f"tt_{user}_{tox_env}"
                 tox_work_dir = f".tox/{branch_name}_{tox_env}"
                 command = f"/bin/bash -c 'set -e; {activate_cmd} && export TOX_WORK_DIR={tox_work_dir} && tox -r -e {tox_env}-{python_version}; exit $?'"
@@ -531,30 +581,36 @@ def main():
                 )
                 if job_id:
                     submitted_jobs.append(("Independent", tox_env, job_id, "None"))
-                    print(f"      ✓ Job submitted with ID: {job_id}")
+                    if verbose:
+                        print(f"      ✓ Job submitted with ID: {job_id}")
                 else:
                     submitted_jobs.append(("Independent", tox_env, "FAILED", "None"))
-                    print(f"      ✗ Failed to submit job")
+                    if verbose:
+                        print(f"      ✗ Failed to submit job")
     else:
-        print("\n" + "=" * 80)
-        print("ERROR: test_models_fit not found in test suite")
-        print("=" * 80)
+        if verbose:
+            print("\n" + "=" * 80)
+            print("ERROR: test_models_fit not found in test suite")
+            print("=" * 80)
         print(
             "Error: test_models_fit is a required prerequisite that creates checkpoints for dependent tests.",
             file=sys.stderr,
         )
-        print()
+        if verbose:
+            print()
 
-        if dependent_test_list:
+        if dependent_test_list and verbose:
             print(f"⚠ Warning: Skipping {len(dependent_test_list)} dependent test(s) (require test_models_fit):")
             for test_name in dependent_test_list:
                 print(f"  - {test_name}")
             print()
 
         if independent_test_list:
-            print(f"ℹ Info: Submitting {len(independent_test_list)} independent test(s):")
+            if verbose:
+                print(f"ℹ Info: Submitting {len(independent_test_list)} independent test(s):")
             for idx, test_name in enumerate(independent_test_list, 1):
-                print(f"  [{idx}/{len(independent_test_list)}] Submitting: {test_name}")
+                if verbose:
+                    print(f"  [{idx}/{len(independent_test_list)}] Submitting: {test_name}")
                 job_name = f"tt_{user}_{test_name}"
                 command = f"/bin/bash -c 'set -e; {activate_cmd} && export TEST_BRANCH={branch_name} && export TEST_FUNCTION={test_name}{env_exports} && tox -r -e integration-tests-base-set-{python_version}; exit $?'"
 
@@ -564,14 +620,16 @@ def main():
                     err_file=log_dir / f"{test_name}.err",
                     command=command,
                 )
-                print(f"      ✓ Job submitted")
+                if verbose:
+                    print(f"      ✓ Job submitted")
         else:
             print("\nError: No independent tests found. Cannot proceed without test_models_fit.")
             sys.exit(1)
 
-    print("\n" + "=" * 80)
-    print("Job Submission Complete")
-    print("=" * 80)
+    if verbose:
+        print("\n" + "=" * 80)
+        print("Job Submission Complete")
+        print("=" * 80)
 
     # Save job IDs to file
     if submitted_jobs:
@@ -589,7 +647,8 @@ def main():
         with jobs_file.open("w") as f:
             json.dump(job_data, f, indent=2)
 
-        print(f"\n✓ Job IDs saved to: {jobs_file}")
+        if verbose:
+            print(f"\n✓ Job IDs saved to: {jobs_file}")
 
     # Print summary table of all submitted jobs
     if submitted_jobs:
@@ -603,16 +662,9 @@ def main():
         print(f"Total jobs submitted: {len(submitted_jobs)}")
         print()
 
-    print(f"✓ Logs directory: {log_dir}")
+    print(f"\n✓ Logs directory: {log_dir}")
+    print(f"✓ Check status with: python3 {sys.argv[0]} --check-status {log_dir}")
     print(f"✓ Monitor jobs with: bjobs -J 'tt_{user}_*'")
-    print(f"✓ Check status later with: python3 {sys.argv[0]} --check-status {log_dir}")
-    print()
-    print("Notes:")
-    print("  • Dependent tests will only run if test_models_fit passes (exit code 0)")
-    if skip_cleanup:
-        print("  • Cleanup test skipped (--no-cleanup flag set)")
-    elif cleanup_test:
-        print("  • test_cleanup will run last, after all dependent tests complete")
     print("=" * 80)
 
 
